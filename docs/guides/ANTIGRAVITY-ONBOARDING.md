@@ -172,23 +172,39 @@ Google rejects redirect URIs that:
 
 **Option B: Custom OAuth credentials**
 
-- Set `ANTIGRAVITY_OAUTH_CLIENT_TYPE=web` in your environment
-- Provide your own Google OAuth credentials:
+- Create an OAuth client of type **Web application** in Google Cloud Console
+- Register your public callback, e.g. `https://omniroute.onrender.com/callback`
+- Provide your own Google OAuth credentials — the variable names are provider-scoped:
   ```
-  GOOGLE_OAUTH_CLIENT_ID=your-client-id
-  GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
+  ANTIGRAVITY_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
+  ANTIGRAVITY_OAUTH_CLIENT_SECRET=your-client-secret
   ```
-- Register `https://your-domain.com/callback` as an authorized redirect URI in Google Cloud Console
+- Point OmniRoute at your public origin so the callback is not built on localhost:
 
-**Option C: Use agy CLI for initial login**
+  ```
+  OMNIROUTE_PUBLIC_BASE_URL=https://omniroute.onrender.com
+  ```
 
-- Run `agy login` on the machine that will access OmniRoute
-- The OAuth flow completes locally, tokens are stored
-- Import the connection into OmniRoute via Dashboard
+  `OMNIROUTE_PUBLIC_BASE_URL` is read at **runtime** by the server, so on a
+  platform like Render you can set it from the dashboard and redeploy without
+  rebuilding. A `localhost` value in `NEXT_PUBLIC_BASE_URL` never takes
+  precedence over it.
+
+  You do **not** need to set `ANTIGRAVITY_OAUTH_CLIENT_TYPE`. Older docs listed
+  it as required for the redirect upgrade, but it never gated anything — the
+  upgrade runs for any custom Google client. It is recorded on the connection
+  only as client metadata for token refresh.
+
+**Option C: Use the CLI on a laptop (no Google Cloud Console work)**
+
+- Run `npx omniroute login antigravity` on a machine with a browser
+- The OAuth flow completes locally against loopback and the finished credential
+  is pushed to your remote OmniRoute instance
 
 ### Limitations
 
 - Custom OAuth credentials require a domain name (Google does not accept IP addresses as redirect URIs)
+- The scopes Antigravity requests (`auth/cclog`, `auth/experimentsandconfigs`) are Code Assist scopes; a brand-new Google Cloud project may not have them available. If the consent step rejects them, use Option C.
 - If you don't have a domain, use Option A or C instead
 
 ---

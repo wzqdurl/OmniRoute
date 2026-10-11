@@ -7,7 +7,7 @@
  * @see ./providers/index.js for the registry
  */
 
-import { generatePKCE, generateState } from "./utils/pkce";
+import { generatePKCE } from "./utils/pkce";
 import { PROVIDERS } from "./providers/index";
 import { resolvePublicCred } from "@omniroute/open-sse/utils/publicCreds.ts";
 
@@ -47,6 +47,42 @@ function isLoopbackHostname(hostname: string): boolean {
   return /^(localhost|127\.0\.0\.1|\[::1\]|::1)$/i.test(hostname);
 }
 
+/**
+ * Resolve the public base URL, ignoring the localhost placeholder that
+ * `.env.example` ships as `NEXT_PUBLIC_BASE_URL=http://localhost:20128`.
+ *
+ * That default is correct for a local install but actively harmful on a remote
+ * host: it is truthy, so a plain `NEXT_PUBLIC_BASE_URL || OMNIROUTE_PUBLIC_BASE_URL`
+ * short-circuits and the server-side override (the variable a Render/VPS
+ * operator actually sets) is never read — leaving the OAuth callback pointing at
+ * `http://localhost:20128`, which is unreachable from a phone. The browser modal
+ * already guards against this exact placeholder in `OAuthModal.tsx`; this keeps
+ * the server resolver consistent with it.
+ */
+function resolvePublicBaseUrlFromEnv(env: OAuthRedirectEnv | null | undefined): string {
+  const nextPublic = normalizeBaseUrl(env?.NEXT_PUBLIC_BASE_URL);
+  if (nextPublic && !isLoopbackBaseUrl(nextPublic)) {
+    return nextPublic;
+  }
+
+  const serverOverride = normalizeBaseUrl(env?.OMNIROUTE_PUBLIC_BASE_URL);
+  if (serverOverride) {
+    return serverOverride;
+  }
+
+  // Only fall back to the placeholder when nothing else is configured — a local
+  // install must keep resolving exactly as before.
+  return nextPublic;
+}
+
+function isLoopbackBaseUrl(baseUrl: string): boolean {
+  try {
+    return isLoopbackHostname(new URL(baseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function upgradeLoopbackToPublic(redirectUri: string, publicBaseUrl: string): string {
   try {
     const requested = new URL(redirectUri);
@@ -81,25 +117,18 @@ export function resolveBrowserOAuthRedirectUri(
     return redirectUri;
   }
 
-  const publicBaseUrl =
-    normalizeBaseUrl(env?.NEXT_PUBLIC_BASE_URL) || normalizeBaseUrl(env?.OMNIROUTE_PUBLIC_BASE_URL);
+  const publicBaseUrl = resolvePublicBaseUrlFromEnv(env);
 
   if (!publicBaseUrl) {
     return redirectUri;
   }
 
-  // Web application OAuth client type allows non-loopback redirect URIs.
-  // When the operator sets ANTIGRAVITY_OAUTH_CLIENT_TYPE=web with custom
-  // credentials, upgrade the loopback redirect so remote deployments work
-  // without SSH tunneling. Non-web client types fall through to the
-  // existing custom-credentials upgrade path below.
-  if (GOOGLE_BROWSER_PROVIDERS.has(providerName)) {
-    const clientType = (env?.ANTIGRAVITY_OAUTH_CLIENT_TYPE || "").toLowerCase().trim();
-    if (clientType === "web") {
-      return upgradeLoopbackToPublic(redirectUri, publicBaseUrl);
-    }
-  }
-
+  // A Web-application Google OAuth client is what makes a non-loopback redirect
+  // URI acceptable upstream, but the redirect URI itself does not depend on the
+  // declared client type: any custom client reaches this branch, and an
+  // already-remote URI is left untouched below. (`ANTIGRAVITY_OAUTH_CLIENT_TYPE`
+  // is therefore NOT required to enable the upgrade — it is metadata recorded on
+  // the connection for token refresh, not a gate. See docs/guides/ANTIGRAVITY-ONBOARDING.md.)
   try {
     const requested = new URL(redirectUri);
     if (!isLoopbackHostname(requested.hostname)) {
